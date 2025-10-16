@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Holo House with Gesture Control</title>
+    <!-- Load Tailwind CSS for modern styling (deferred) -->
+    <script defer src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Three.js library for 3D graphics (deferred) -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Using MediaPipe Hands (explicit path to avoid loader issues) -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    
+    <style>
+        /* Custom CSS for a clean, single-cube view */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #00ff88; 
+            padding: 8px 16px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            font-size: 0.9rem;
+            box-shadow: 0 4px 10px rgba(0, 255, 136, 0.2);
+            z-index: 10;
+        }
+        #canvas-container {
+            width: 90vmin; 
+            height: 90vmin;
+            max-width: 600px;
+            max-height: 600px;
+            border: 2px solid #00ff88; /* Added back a visual frame */
+            box-shadow: 0 0 20px #00ff88;
+            border-radius: 12px;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+        }
+        /* Video element must be hidden, it is only a data source for the AI model */
+        #webcamVideo {
+            position: fixed; 
+            top: -1000px;    
+            left: -1000px;
+            opacity: 0;      
+            width: 300px;    
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="info">Loading 3D Holo House and Gesture Tracker (performance-optimized)...</div>
+
+    <div id="canvas-container" class="flex justify-center items-center">
+        <!-- The 3D rendering will happen inside this container -->
+    </div>
+    
+    <video id="webcamVideo" autoplay playsinline></video>
+
+    <script>
+        // --- Essential Setup Variables ---
+        const container = document.getElementById('canvas-container');
+        let scene, camera, renderer, houseGroup; // Changed 'cube' to 'houseGroup'
+        const video = document.getElementById('webcamVideo');
+
+        // --- GESTURE VARIABLES ---
+        let hands; 
+        let isHandsLoaded = false;
+        let gestureRotationX = 0;
+        let gestureRotationY = 0;
+        let gestureScale = 1.0; 
+
+        /**
+         * Creates the 3D Holo House with interior details.
+         * @param {number} w Width
+         * @param {number} h Height
+         * @param {number} d Depth
+         * @returns {THREE.Group} The complete house model.
+         */
+        function createHoloHouse(w, h, d) {
+            const group = new THREE.Group();
+            const wallColor = 0x00ff88;
+            const floorColor = 0x2e2e2e;
+
+            // --- 1. Holo Outer Shell (Wireframe Frame) ---
+            const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
+            const lineMaterial = new THREE.LineBasicMaterial({ 
+                color: wallColor, 
+                linewidth: 2, 
+                transparent: true, 
+                opacity: 0.5 
+            });
+            const wireframe = new THREE.LineSegments(edges, lineMaterial);
+            group.add(wireframe);
+
+            // --- 2. Floor (Solid Base) ---
+            const floorGeometry = new THREE.PlaneGeometry(w, d);
+            // Use a MeshPhongMaterial to react to internal lighting
+            const floorMaterial = new THREE.MeshPhongMaterial({ color: floorColor, side: THREE.DoubleSide });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = Math.PI / 2; // Rotate to lie flat
+            const halfH = h / 2;
+            floor.position.y = -halfH;
+            group.add(floor);
+
+            // Positioning constants
+            const halfW = w / 2;
+            const halfD = d / 2;
+            const furnitureY = -halfH + 0.1; // Place slightly above the floor
+
+            // --- 3. Interior Objects ---
+
+            // --- Sofa (against the back wall) ---
+            const sofaW = 2.5;
+            const sofaH = 0.5;
+            const sofaD = 1.0;
+            const sofaGeometry = new THREE.BoxGeometry(sofaW, sofaH, sofaD);
+            const sofaMaterial = new THREE.MeshPhongMaterial({ color: 0x8b4513 }); // Brown
+            const sofa = new THREE.Mesh(sofaGeometry, sofaMaterial);
+            // Center in the back half, flush with the back wall
+            sofa.position.set(0, furnitureY + sofaH / 2, -halfD + sofaD / 2);
+            group.add(sofa);
+
+            // --- TV (on the side wall) ---
+            const tvW = 1.2;
+            const tvH = 0.7;
+            const tvD = 0.05;
+            const tvGeometry = new THREE.BoxGeometry(tvW, tvH, tvD);
+            // Use an emissive material to look like a screen
+            const tvMaterial = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x333333 }); 
+            const tv = new THREE.Mesh(tvGeometry, tvMaterial);
+            // Placed on the right wall
+            tv.position.set(halfW - tvD / 2, furnitureY + tvH / 2 + 0.5, 0); 
+            tv.rotation.y = -Math.PI / 2; // Rotate to face inwards
+            group.add(tv);
+
+            // --- Desk ---
+            const deskW = 1.5;
+            const deskH = 0.7;
+            const deskD = 0.6;
+            const deskGeometry = new THREE.BoxGeometry(deskW, deskH, deskD);
+            const deskMaterial = new THREE.MeshPhongMaterial({ color: 0x696969 }); // Dark gray
+            const desk = new THREE.Mesh(deskGeometry, deskMaterial);
+            // Placed in the front-left corner
+            desk.position.set(-halfW + deskW / 2 + 0.1, furnitureY + deskH / 2, halfD - deskD / 2 - 0.5); 
+            group.add(desk);
+
+            // --- Laptop (with "iitianyank" text) ---
+            const laptopW = 0.5;
+            const laptopH = 0.05;
+            const laptopD = 0.35;
+            const laptopGeometry = new THREE.BoxGeometry(laptopW, laptopH, laptopD);
+            const laptopMaterial = new THREE.MeshPhongMaterial({ color: 0xcccccc }); // Light gray body
+            const laptop = new THREE.Mesh(laptopGeometry, laptopMaterial);
+            
+            laptop.position.set(
+                desk.position.x, 
+                desk.position.y + deskH / 2 + laptopH / 2 + 0.02, // Just above desk
+                desk.position.z
+            );
+            group.add(laptop);
+
+            // Laptop Screen Text (Canvas Texture for "iitianyank")
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#0000ff'; // Blue screen background
+            ctx.fillRect(0, 0, 256, 128);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 30px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('iitianyank', 128, 64);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            
+            const screenGeometry = new THREE.PlaneGeometry(0.48, 0.32);
+            // Use MeshBasicMaterial for the screen map
+            const screenMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.FrontSide }); 
+            const screen = new THREE.Mesh(screenGeometry, screenMaterial);
+            
+            screen.rotation.x = -Math.PI * 0.45; // Tilted screen
+            screen.position.set(
+                laptop.position.x,
+                laptop.position.y + 0.1,
+                laptop.position.z - 0.1
+            );
+            group.add(screen);
+
+            // --- The Man (Cylinder Body + Sphere Head) --- 
+            // FIX: Replaced THREE.CapsuleGeometry with a Cylinder and Sphere group, as CapsuleGeometry 
+            // is often not available in the core three.min.js library.
+            const manGroup = new THREE.Group();
+            const manMaterial = new THREE.MeshPhongMaterial({ color: 0xff4500 }); // Orange figure
+
+            // Body (Cylinder)
+            const bodyHeight = 0.8;
+            const bodyRadius = 0.25;
+            const bodyGeometry = new THREE.CylinderGeometry(bodyRadius, bodyRadius, bodyHeight, 8);
+            const body = new THREE.Mesh(bodyGeometry, manMaterial);
+            body.position.y = bodyHeight / 2; 
+            manGroup.add(body);
+
+            // Head (Sphere)
+            const headRadius = 0.3;
+            const headGeometry = new THREE.SphereGeometry(headRadius, 16, 16);
+            const head = new THREE.Mesh(headGeometry, manMaterial);
+            head.position.y = bodyHeight + headRadius / 2 - 0.05; // -0.05 for slight overlap
+            manGroup.add(head);
+
+            // Position the entire manGroup's base relative to the floor
+            manGroup.position.set(-halfW + 0.5, furnitureY, halfD - 1.5); 
+            group.add(manGroup);
+            
+            // --- Lighting ---
+            // Ambient light for general visibility
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            group.add(ambientLight);
+            
+            // Point light inside the house for dynamic shadows/highlights
+            const pointLight = new THREE.PointLight(0xffffff, 1.5, 10);
+            pointLight.position.set(0, halfH - 0.5, 0); // Ceiling light
+            group.add(pointLight);
+
+            return group;
+        }
+
+        /**
+         * Initializes the Three.js scene, camera, renderer, and the house model.
+         */
+        function init() {
+            // 1. Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a202c); // Dark blue-gray background
+
+            // 2. Camera setup
+            const aspect = container.clientWidth / container.clientHeight;
+            camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            camera.position.z = 6; // Moved camera back slightly for the larger house (4 units wide)
+
+            // 3. Renderer setup (cap pixel ratio for faster rendering on high-DPI displays)
+            const maxPixelRatio = 1.5;
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+            
+            // 4. Create the Holo House model
+            // Dimensions: 4 units wide, 3 units high, 4 units deep
+            houseGroup = createHoloHouse(4, 3, 4); 
+            scene.add(houseGroup);
+            
+            // Handle window resizing
+            window.addEventListener('resize', onWindowResize, false);
+            
+            setupWebcam();
+        }
+
+        /**
+         * Uses the browser's MediaDevices API to access the webcam stream.
+         */
+        async function setupWebcam() {
+            try {
+                // Request a lower resolution video stream for faster model inference
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    setTimeout(setupHands, 50); 
+                };
+
+            } catch (err) {
+                console.error("Error accessing webcam:", err);
+                document.getElementById('info').textContent = "Error: Webcam Access Denied. Cannot Use Gestures.";
+                document.getElementById('info').style.color = '#ff4d4d'; 
+                document.getElementById('info').style.boxShadow = '0 4px 10px rgba(255, 77, 77, 0.2)';
+            }
+        }
+
+        /**
+         * Initializes and configures the MediaPipe Hands model.
+         */
+        function setupHands() {
+            if (typeof Hands === 'undefined') {
+                document.getElementById('info').textContent = "Fatal Error: Hand Tracker library failed to load.";
+                document.getElementById('info').style.color = '#ff4d4d'; 
+                return;
+            }
+
+            hands = new Hands({
+                locateFile: (file) => {
+                    // Return a full URL string so the runtime can fetch model assets.
+                    return https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file};
+                }
+            });
+
+            // Lower modelComplexity for faster, lighter performance on lower-end devices
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+            
+            hands.initialize().then(() => {
+                isHandsLoaded = true;
+                document.getElementById('info').textContent = "Ready: Move your hand to rotate and zoom the Holo House!";
+            }).catch(e => {
+                console.error("MediaPipe Initialization Error:", e);
+                document.getElementById('info').textContent = "Initialization Failed: Could not load vision model assets.";
+                document.getElementById('info').style.color = '#ff4d4d';
+            });
+        }
+
+        /**
+         * Processes the results from the hand tracker and maps them to rotation and scale.
+         * @param {object} results - The hand tracking results
+         */
+        function onResults(results) {
+            // Safely check if hands are detected
+            if (results.multiHandLandmarks?.length > 0) {
+                // Landmark 0 is the Wrist. Coordinates are normalized (0.0 to 1.0)
+                const wrist = results.multiHandLandmarks[0][0];
+                
+                // --- ROTATION LOGIC (X and Y coordinates) ---
+                // Map hand X position (0.0 to 1.0) to rotation Y (e.g., -3 to +3 radians)
+                gestureRotationY = (0.5 - wrist.x) * -6; 
+                // Map hand Y position (0.0 to 1.0) to rotation X
+                gestureRotationX = (0.5 - wrist.y) * 6;  
+
+                // --- SCALING LOGIC (Z coordinate) ---
+                const minZ = 0.1; // Closest Z value seen
+                const maxZ = 0.8; // Farthest Z value seen
+                const normalizedDepth = (wrist.z - minZ) / (maxZ - minZ); 
+                
+                const clampedDepth = Math.min(1.0, Math.max(0.0, normalizedDepth)); 
+                const invertedDepth = 1.0 - clampedDepth; // 1.0 when close, 0.0 when far
+                
+                const minScale = 0.5;
+                const maxScale = 2.0;
+                
+                gestureScale = minScale + invertedDepth * (maxScale - minScale); 
+
+                document.getElementById('info').textContent = "Tracking Active: Rotate with hand position, Zoom with hand depth.";
+
+            } else {
+                 document.getElementById('info').textContent = "Ready: Show your hand to control the Holo House.";
+                // Reset controls if no hand is detected
+                gestureRotationX = 0;
+                gestureRotationY = 0;
+                gestureScale = 1.0; 
+            }
+        }
+
+        /**
+         * The main animation loop that updates the scene every frame.
+         */
+        function animate() {
+            requestAnimationFrame(animate); 
+            
+            // 1. Send the current video frame to the MediaPipe model for processing
+            if (isHandsLoaded && video.readyState >= 2) { 
+                hands.send({ image: video });
+            }
+
+            // 2. Apply gestures directly to the single houseGroup with dampening for smooth movement
+            // Apply rotation
+            houseGroup.rotation.y += (gestureRotationY - houseGroup.rotation.y) * 0.1;
+            houseGroup.rotation.x += (gestureRotationX - houseGroup.rotation.x) * 0.1;
+            
+            // Apply scale
+            houseGroup.scale.x += (gestureScale - houseGroup.scale.x) * 0.1;
+            houseGroup.scale.y += (gestureScale - houseGroup.scale.y) * 0.1;
+            houseGroup.scale.z += (gestureScale - houseGroup.scale.z) * 0.1;
+
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix(); 
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Start the application when the window finishes loading
+        window.onload = function () {
+            init();
+            animate();
+        };
+
+    </script>
+
+</body>
+</html>
